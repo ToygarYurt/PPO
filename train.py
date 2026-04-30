@@ -9,7 +9,7 @@ env_configs = {
     'CartPole-v1': {
         'max_episodes': 600,
         'max_timesteps': 500,
-        'update_timestep': 2048,
+        'update_timestep': 512,
         'lr': 3e-4,
         'K_epochs': 4,
         'batch_size': 64,
@@ -25,7 +25,7 @@ env_configs = {
         'max_timesteps': 1000,
         'update_timestep': 4096,
         'lr': 2e-4,
-        'K_epochs': 10,
+        'K_epochs': 5,
         'batch_size': 128,
         'gamma': 0.99,
         'gae_lambda': 0.98,

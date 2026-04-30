@@ -112,6 +112,7 @@ class PPO:
         self.batch_size = batch_size
         self.gae_lambda = gae_lambda
         self.value_coef = value_coef
+        self.start_entropy_coef = entropy_coef
         self.entropy_coef = entropy_coef
         self.start_lr = lr
 
@@ -131,14 +132,15 @@ class PPO:
             action = action.item()
         return action, log_prob.item(), value.item()
 
-    def update_learning_rate(self, current_episode, max_episodes):
+    def update_hyperparams(self, current_episode, max_episodes):
         frac = 1.0 - float(current_episode) / float(max_episodes)
         lr = self.start_lr * frac
+        self.entropy_coef = self.start_entropy_coef * frac
         for param_group in self.optimizer.param_groups:
             param_group['lr'] = lr
 
     def update(self, memory, current_episode, max_episodes):
-        self.update_learning_rate(current_episode, max_episodes)
+        self.update_hyperparams(current_episode, max_episodes)
 
         rewards = torch.tensor(memory.rewards, dtype=torch.float32, device=self.device)
         masks = torch.tensor([0.0 if done else 1.0 for done in memory.is_terminals], dtype=torch.float32, device=self.device)
