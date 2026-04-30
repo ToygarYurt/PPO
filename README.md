@@ -1,6 +1,6 @@
 # PPO Implementation
 
-This project implements the Proximal Policy Optimization (PPO) algorithm from scratch using PyTorch. The implementation is tested on two benchmark environments from Gymnasium: CartPole-v1 (discrete action space) and LunarLander-v2 (continuous action space).
+This project implements the Proximal Policy Optimization (PPO) algorithm from scratch using PyTorch. The implementation is tested on two benchmark environments from Gymnasium: CartPole-v1 (discrete action space) and LunarLander-v3 (continuous action space).
 
 ## Features
 
@@ -42,7 +42,7 @@ Run the training script:
 python train.py
 ```
 
-This will train PPO on CartPole-v1 and then on LunarLander-v2, and generate a `rewards.png` plot.
+This will train PPO on CartPole-v1 and then on LunarLander-v3, and generate a `rewards.png` plot.
 
 ## Files
 
@@ -64,6 +64,6 @@ The PPO implementation includes:
 
 The algorithm is tested on:
 - CartPole-v1: Solved when average reward over 100 episodes >= 195
-- LunarLander-v2: Solved when average reward over 100 episodes >= 200
+- LunarLander-v3: Solved when average reward over 100 episodes >= 200
 
 Training progress is printed to the console, and rewards are plotted at the end.

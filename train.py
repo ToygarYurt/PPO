@@ -73,8 +73,8 @@ if __name__ == '__main__':
     rewards_cartpole = train('CartPole-v1', max_episodes=500)
 
     # Train on LunarLander
-    print("Training on LunarLander-v2")
-    rewards_lunar = train('LunarLander-v2', max_episodes=1000)
+    print("Training on LunarLander-v3")
+    rewards_lunar = train('LunarLander-v3', max_episodes=1000)
 
     # Plot rewards
     plt.figure(figsize=(12, 5))
@@ -92,4 +92,5 @@ if __name__ == '__main__':
 
     plt.tight_layout()
     plt.savefig('rewards.png')
+    print("Plot saved as rewards.png")
     plt.show()
