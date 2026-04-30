@@ -4,30 +4,77 @@ import numpy as np
 from ppo import PPO, Memory
 import matplotlib.pyplot as plt
 
-def train(env_name, max_episodes=1000, max_timesteps=200, update_timestep=2000):
+
+env_configs = {
+    'CartPole-v1': {
+        'max_episodes': 600,
+        'max_timesteps': 500,
+        'update_timestep': 2048,
+        'lr': 3e-4,
+        'K_epochs': 4,
+        'batch_size': 64,
+        'gamma': 0.99,
+        'gae_lambda': 0.95,
+        'eps_clip': 0.2,
+        'value_coef': 0.5,
+        'entropy_coef': 0.01,
+        'solved_reward': 195,
+    },
+    'LunarLander-v3': {
+        'max_episodes': 1000,
+        'max_timesteps': 1000,
+        'update_timestep': 4096,
+        'lr': 2e-4,
+        'K_epochs': 10,
+        'batch_size': 128,
+        'gamma': 0.99,
+        'gae_lambda': 0.98,
+        'eps_clip': 0.2,
+        'value_coef': 0.5,
+        'entropy_coef': 0.01,
+        'solved_reward': 200,
+    },
+}
+
+
+def train(env_name):
+    config = env_configs[env_name]
     env = gym.make(env_name)
-    state_dim = env.observation_space.shape[0]
+    state_dim = int(np.prod(env.observation_space.shape))
     if isinstance(env.action_space, gym.spaces.Discrete):
         action_dim = env.action_space.n
         continuous = False
     else:
-        action_dim = env.action_space.shape[0]
+        action_dim = int(np.prod(env.action_space.shape))
         continuous = True
 
-    ppo = PPO(state_dim, action_dim, continuous)
+    ppo = PPO(
+        state_dim=state_dim,
+        action_dim=action_dim,
+        continuous=continuous,
+        lr=config['lr'],
+        gamma=config['gamma'],
+        eps_clip=config['eps_clip'],
+        K_epochs=config['K_epochs'],
+        batch_size=config['batch_size'],
+        gae_lambda=config['gae_lambda'],
+        value_coef=config['value_coef'],
+        entropy_coef=config['entropy_coef'],
+    )
     memory = Memory()
 
     timestep = 0
     rewards = []
+    max_timesteps = env.spec.max_episode_steps if getattr(env, 'spec', None) and env.spec.max_episode_steps is not None else config['max_timesteps']
 
-    for episode in range(max_episodes):
+    for episode in range(config['max_episodes']):
         state, _ = env.reset()
         episode_reward = 0
 
-        for t in range(max_timesteps):
+        for _ in range(max_timesteps):
             timestep += 1
+            action, log_prob, value = ppo.select_action(state)
 
-            action, log_prob, _ = ppo.select_action(state)
             if continuous:
                 action = np.clip(action, env.action_space.low, env.action_space.high)
 
@@ -35,48 +82,50 @@ def train(env_name, max_episodes=1000, max_timesteps=200, update_timestep=2000):
             done = terminated or truncated
             episode_reward += reward
 
-            memory.states.append(torch.FloatTensor(state))
+            memory.states.append(torch.tensor(state, dtype=torch.float32))
             if continuous:
-                memory.actions.append(torch.FloatTensor(action))
+                memory.actions.append(torch.tensor(action, dtype=torch.float32))
             else:
-                memory.actions.append(torch.FloatTensor([action]))
-            memory.logprobs.append(torch.FloatTensor([log_prob]))
+                memory.actions.append(torch.tensor([action], dtype=torch.int64))
+            memory.logprobs.append(torch.tensor([log_prob], dtype=torch.float32))
             memory.rewards.append(reward)
+            memory.values.append(value)
             memory.is_terminals.append(done)
 
             state = next_state
 
-            if timestep % update_timestep == 0:
-                ppo.update(memory)
+            if timestep >= config['update_timestep']:
+                ppo.update(memory, current_episode=episode, max_episodes=config['max_episodes'])
                 memory.clear_memory()
                 timestep = 0
 
             if done:
+                if len(memory.states) > 0:
+                    ppo.update(memory, current_episode=episode, max_episodes=config['max_episodes'])
+                    memory.clear_memory()
+                    timestep = 0
                 break
 
         rewards.append(episode_reward)
-        print(f"Episode {episode}, Reward: {episode_reward}")
+        average_reward = np.mean(rewards[-100:]) if len(rewards) >= 100 else np.mean(rewards)
+        print(f"Episode {episode}, Reward: {episode_reward:.1f}, Avg100: {average_reward:.1f}")
 
-        if len(rewards) >= 100 and np.mean(rewards[-100:]) >= 195 and env_name == 'CartPole-v1':
-            print("CartPole solved!")
-            break
-        elif len(rewards) >= 100 and np.mean(rewards[-100:]) >= 200 and env_name == 'LunarLander-v2':
-            print("LunarLander solved!")
+        if len(rewards) >= 100 and average_reward >= config['solved_reward']:
+            solved_name = 'CartPole' if env_name == 'CartPole-v1' else 'LunarLander'
+            print(f"{solved_name} solved in episode {episode}! Avg100={average_reward:.1f}")
             break
 
     env.close()
     return rewards
 
+
 if __name__ == '__main__':
-    # Train on CartPole
     print("Training on CartPole-v1")
-    rewards_cartpole = train('CartPole-v1', max_episodes=500)
+    rewards_cartpole = train('CartPole-v1')
 
-    # Train on LunarLander
     print("Training on LunarLander-v3")
-    rewards_lunar = train('LunarLander-v3', max_episodes=1000)
+    rewards_lunar = train('LunarLander-v3')
 
-    # Plot rewards
     plt.figure(figsize=(12, 5))
     plt.subplot(1, 2, 1)
     plt.plot(rewards_cartpole)
@@ -86,7 +135,7 @@ if __name__ == '__main__':
 
     plt.subplot(1, 2, 2)
     plt.plot(rewards_lunar)
-    plt.title('LunarLander-v2 Rewards')
+    plt.title('LunarLander-v3 Rewards')
     plt.xlabel('Episode')
     plt.ylabel('Reward')
 
