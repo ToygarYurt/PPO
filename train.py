@@ -7,9 +7,9 @@ import matplotlib.pyplot as plt
 
 env_configs = {
     'CartPole-v1': {
-        'max_episodes': 600,
+        'max_episodes': 500,
         'max_timesteps': 500,
-        'update_timestep': 512,
+        'update_timestep': 2048,
         'lr': 3e-4,
         'K_epochs': 4,
         'batch_size': 64,
@@ -21,9 +21,9 @@ env_configs = {
         'solved_reward': 195,
     },
     'LunarLander-v3': {
-        'max_episodes': 1000,
+        'max_episodes': 3000,
         'max_timesteps': 1000,
-        'update_timestep': 4096,
+        'update_timestep': 8192,
         'lr': 2e-4,
         'K_epochs': 5,
         'batch_size': 128,
@@ -77,6 +77,12 @@ def train(env_name):
 
             if continuous:
                 action = np.clip(action, env.action_space.low, env.action_space.high)
+                # Keep the stored old log-prob consistent with the action sent to the env.
+                with torch.no_grad():
+                    state_tensor = torch.tensor(state, dtype=torch.float32, device=ppo.device).unsqueeze(0)
+                    action_tensor = torch.tensor(action, dtype=torch.float32, device=ppo.device).unsqueeze(0)
+                    log_prob, _, _ = ppo.policy_old.evaluate(state_tensor, action_tensor)
+                    log_prob = log_prob.item()
 
             next_state, reward, terminated, truncated, _ = env.step(action)
             done = terminated or truncated
@@ -99,11 +105,13 @@ def train(env_name):
                 memory.clear_memory()
                 timestep = 0
 
-            if done:
+            elif done:
                 if len(memory.states) > 0:
                     ppo.update(memory, current_episode=episode, max_episodes=config['max_episodes'])
                     memory.clear_memory()
                     timestep = 0
+
+            if done:
                 break
 
         rewards.append(episode_reward)

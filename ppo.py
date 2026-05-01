@@ -134,8 +134,9 @@ class PPO:
 
     def update_hyperparams(self, current_episode, max_episodes):
         frac = 1.0 - float(current_episode) / float(max_episodes)
-        lr = self.start_lr * frac
-        self.entropy_coef = self.start_entropy_coef * frac
+        # Keep small floors so annealing does not drive exploration or step size to zero.
+        lr = self.start_lr * max(frac, 0.1)
+        self.entropy_coef = self.start_entropy_coef * max(frac, 0.2)
         for param_group in self.optimizer.param_groups:
             param_group['lr'] = lr
 
@@ -148,7 +149,8 @@ class PPO:
 
         advantages = torch.zeros_like(rewards, device=self.device)
         gae = 0.0
-        next_value = 0.0
+        # Bootstrap non-terminal rollout fragments from the last stored value estimate.
+        next_value = values[-1] if not memory.is_terminals[-1] else values.new_tensor(0.0)
         for step in reversed(range(len(rewards))):
             delta = rewards[step] + self.gamma * next_value * masks[step] - values[step]
             gae = delta + self.gamma * self.gae_lambda * masks[step] * gae
@@ -183,7 +185,9 @@ class PPO:
                 surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages_batch
                 policy_loss = -torch.min(surr1, surr2).mean()
 
-                value_clipped = values[batch_idx] + torch.clamp(state_values - values[batch_idx], -self.eps_clip, self.eps_clip)
+                # PPO value clipping must compare against fixed old predictions.
+                value_old = values[batch_idx].detach()
+                value_clipped = value_old + torch.clamp(state_values - value_old, -self.eps_clip, self.eps_clip)
                 value_loss = 0.5 * (F.mse_loss(state_values, returns_batch) + F.mse_loss(value_clipped, returns_batch))
                 entropy_loss = -entropy.mean()
 
