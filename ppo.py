@@ -158,6 +158,8 @@ class PPO:
             next_value = values[step]
 
         returns = advantages + values
+        # Normalize value targets to reduce critic target scale variance.
+        returns = (returns - returns.mean()) / (returns.std() + 1e-8)
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
         old_states = torch.stack(memory.states).to(self.device).detach()
@@ -179,6 +181,9 @@ class PPO:
 
                 logprobs, entropy, state_values = self.policy.evaluate(states, actions)
                 state_values = state_values.squeeze(-1)
+
+                # Clip normalized advantages to prevent outliers from dominating policy updates.
+                advantages_batch = torch.clamp(advantages_batch, -5, 5)
 
                 ratios = torch.exp(logprobs - old_logprobs_batch)
                 surr1 = ratios * advantages_batch

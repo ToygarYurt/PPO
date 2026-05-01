@@ -10,28 +10,34 @@ env_configs = {
         'max_episodes': 500,
         'max_timesteps': 500,
         'update_timestep': 2048,
+        # Lower learning rate reduces overly aggressive PPO policy updates.
         'lr': 3e-4,
         'K_epochs': 4,
-        'batch_size': 64,
+        # Larger minibatches reduce gradient variance during each PPO update.
+        'batch_size': 128,
         'gamma': 0.99,
         'gae_lambda': 0.95,
         'eps_clip': 0.2,
         'value_coef': 0.5,
-        'entropy_coef': 0.01,
+        # Lower entropy keeps exploration useful without making learning too noisy.
+        'entropy_coef': 0.001,
         'solved_reward': 195,
     },
     'LunarLander-v3': {
-        'max_episodes': 3000,
+        'max_episodes': 1500,
         'max_timesteps': 1000,
-        'update_timestep': 8192,
-        'lr': 2e-4,
+        'update_timestep': 2048,
+        # Lower learning rate reduces overly aggressive PPO policy updates.
+        'lr': 6e-4,
         'K_epochs': 5,
+        # Larger minibatches reduce gradient variance during each PPO update.
         'batch_size': 128,
         'gamma': 0.99,
         'gae_lambda': 0.98,
         'eps_clip': 0.2,
         'value_coef': 0.5,
-        'entropy_coef': 0.01,
+        # Lower entropy keeps exploration useful without making learning too noisy.
+        'entropy_coef': 0.001,
         'solved_reward': 200,
     },
 }
