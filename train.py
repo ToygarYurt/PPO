@@ -3,6 +3,9 @@ import json
 import time
 
 import gymnasium as gym
+import matplotlib
+
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -27,6 +30,7 @@ env_configs = {
         "patience": 150,
         "min_episodes": 100,
         "target_kl": 0.03,
+        "eval_deterministic": True,
     },
     "LunarLander-v3": {
         "max_episodes": 3000,
@@ -44,6 +48,7 @@ env_configs = {
         "patience": 250,
         "min_episodes": 500,
         "target_kl": 0.02,
+        "eval_deterministic": False,
     },
 }
 
@@ -92,7 +97,7 @@ def store_transition(memory, state, action, log_prob, reward, value, done, conti
     memory.is_terminals.append(bool(done))
 
 
-def evaluate(env_name, checkpoint_path, episodes=10, seed=123):
+def evaluate(env_name, checkpoint_path, episodes=10, seed=123, deterministic=True):
     env = gym.make(env_name)
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     ppo, continuous, _, _ = make_agent(env, checkpoint["config"])
@@ -105,7 +110,7 @@ def evaluate(env_name, checkpoint_path, episodes=10, seed=123):
         episode_reward = 0.0
         done = False
         while not done:
-            action, _, _ = ppo.select_action(state, deterministic=True)
+            action, _, _ = ppo.select_action(state, deterministic=deterministic)
             if continuous:
                 action = np.clip(action, env.action_space.low, env.action_space.high)
             state, reward, terminated, truncated, _ = env.step(action)
@@ -116,6 +121,7 @@ def evaluate(env_name, checkpoint_path, episodes=10, seed=123):
     env.close()
     return {
         "episodes": episodes,
+        "mode": "deterministic" if deterministic else "stochastic",
         "mean_reward": float(np.mean(rewards)),
         "std_reward": float(np.std(rewards)),
         "rewards": rewards,
@@ -231,7 +237,30 @@ def train(env_name, seed=42):
     }
 
     if best_average_reward > -float("inf"):
-        result["evaluation"] = evaluate(env_name, checkpoint_path, episodes=10, seed=seed + 10_000)
+        primary_deterministic = config.get("eval_deterministic", True)
+        result["evaluation"] = evaluate(
+            env_name,
+            checkpoint_path,
+            episodes=20,
+            seed=seed + 10_000,
+            deterministic=primary_deterministic,
+        )
+        result["evaluation_comparison"] = {
+            "deterministic": evaluate(
+                env_name,
+                checkpoint_path,
+                episodes=10,
+                seed=seed + 20_000,
+                deterministic=True,
+            ),
+            "stochastic": evaluate(
+                env_name,
+                checkpoint_path,
+                episodes=10,
+                seed=seed + 30_000,
+                deterministic=False,
+            ),
+        }
 
     return result
 
@@ -242,6 +271,17 @@ def plot_results(results, save_path="ppo_training_results.png"):
         plt.subplot(1, len(results), index)
         plt.plot(data["rewards"], alpha=0.35, label="Episode reward")
         plt.plot(data["moving_avg_100"], linewidth=2, label="Avg100")
+        best_avg = data.get("metadata", {}).get("best_average_reward")
+        if best_avg is not None:
+            best_episode = int(np.argmax(data["moving_avg_100"]))
+            plt.scatter(best_episode, best_avg, color="tab:red", s=35, zorder=3, label="Best Avg100")
+            plt.annotate(
+                f"best={best_avg:.1f}",
+                xy=(best_episode, best_avg),
+                xytext=(8, 8),
+                textcoords="offset points",
+                fontsize=9,
+            )
         plt.title(env_name)
         plt.xlabel("Episode")
         plt.ylabel("Reward")
