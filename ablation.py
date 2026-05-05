@@ -11,9 +11,14 @@ import numpy as np
 from train import env_configs, plot_training_metrics, safe_name, train
 
 
-DEFAULT_SEEDS = [0, 1, 2, 3, 4]
-GAE_VALUES = [0.95, 0.98, 1.00]
-ENTROPY_VALUES = [0.0, 0.01, 0.05]
+DEFAULT_SEEDS = [0, 1, 2]
+GAE_VALUES = [0.95, 1.00]
+ENTROPY_VALUES = [0.01, 0.005]
+
+# Ablation study variations focus on controlling the bias-variance tradeoff
+# through the GAE lambda parameter and the exploration pressure via entropy
+# regularization. These sweeps help measure sensitivity of PPO training
+# dynamics for LunarLander-v3.
 
 
 def parse_seeds(seed_text):
@@ -43,6 +48,9 @@ def run_seed_group(env_name, label, overrides, seeds, output_dir, verbose=False)
     group_dir = output_dir / safe_name(label)
     group_dir.mkdir(parents=True, exist_ok=True)
     runs = []
+
+    # Execute multiple random seeds for a single experimental condition to
+    # quantify variability and produce statistically meaningful metrics.
 
     for seed in seeds:
         run_name = f"{safe_name(label)}_seed{seed}"
@@ -168,6 +176,10 @@ def main():
         label = f"entropy_coef_{value:.2f}"
         overrides = {**common_overrides, "entropy_coef": value}
         groups[label] = run_seed_group(args.env, label, overrides, seeds, output_dir, verbose=args.verbose)
+
+    # Plotting both the mean and variance across seeds emphasizes not just the
+    # average effect of each parameter setting but also the stability of RL
+    # performance under different random initializations.
 
     plot_dir = output_dir / "plots"
     plot_dir.mkdir(parents=True, exist_ok=True)

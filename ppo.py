@@ -7,9 +7,12 @@ from torch.distributions import Categorical, Normal
 def orthogonal_init(layer, gain=1.0):
     """
     Initialize layer weights using orthogonal initialization.
-    
-    Orthogonal initialization helps with training stability and convergence speed,
-    especially important for deep networks in RL.
+
+    Orthogonal initialization preserves the variance of signals across layers and
+    avoids the pathological scaling that can destabilize policy gradient updates.
+    This is particularly beneficial in RL where value and policy gradients may
+    have very different magnitudes and where poor initialization can lead to
+    catastrophic early policy collapse.
     
     Args:
         layer: Neural network layer to initialize
@@ -52,6 +55,11 @@ class ActorCritic(nn.Module):
             nn.Linear(256, 1)
         )
 
+        # Actor and critic share the same input representation but are separate
+        # heads to allow the policy and value function to specialize. This helps
+        # stabilize learning because the critic provides a baseline while the
+        # actor optimizes the policy surrogate objective.
+
         if self.continuous:
             self.log_std = nn.Parameter(torch.ones(action_dim) * -0.5)
             self.log_std_min = -20.0
@@ -63,6 +71,9 @@ class ActorCritic(nn.Module):
 
         self.apply(self._init_weights)
 
+        # Use smaller initialization gain for the final policy logits/means
+        # so that initial policy behavior remains near zero and exploration is
+        # gradual. The critic uses a standard gain to stabilize value regression.
         orthogonal_init(self.actor[-1], gain=0.01)
         orthogonal_init(self.critic[-1], gain=1.0)
 
@@ -194,12 +205,19 @@ class PPO:
         gae = 0.0
         next_value = values.new_tensor(next_value)
 
+        # Compute Generalized Advantage Estimation (GAE).
+        # GAE trades off bias and variance by combining multi-step returns with
+        # one-step temporal differences, controlled by lambda. This reduces the
+        # variance of the policy gradient while preserving enough signal for
+        # reliable advantage estimation.
         for step in reversed(range(len(rewards))):
             delta = rewards[step] + self.gamma * next_value * masks[step] - values[step]
             gae = delta + self.gamma * self.gae_lambda * masks[step] * gae
             advantages[step] = gae
             next_value = values[step]
 
+        # The return is the advantage plus the current value estimate, which
+        # provides the target for the value function regression.
         returns = advantages + values
 
         if advantages.numel() > 1:
@@ -242,6 +260,10 @@ class PPO:
                 approx_kl = ((ratios - 1.0) - logratio).mean().detach()
                 clip_fraction = ((ratios - 1.0).abs() > self.eps_clip).float().mean().detach()
 
+                # PPO surrogate objective with clipping. The clipping prevents the
+                # policy update from deviating too far from the old policy in a
+                # single optimization step, which preserves stability and avoids
+                # overly aggressive policy updates that can collapse training.
                 surr1 = ratios * advantages_batch
                 surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages_batch
 
@@ -254,11 +276,18 @@ class PPO:
                     self.eps_clip
                 )
 
+                # Value function loss uses both unclipped and clipped targets to
+                # limit the critic's change per update, mirroring the policy
+                # clipping mechanism and reducing harmful oscillations in value
+                # estimates.
                 value_loss = 0.5 * (
                     F.mse_loss(state_values, returns_batch) +
                     F.mse_loss(value_clipped, returns_batch)
                 )
 
+                # Entropy bonus encourages exploration by penalizing overly
+                # confident policies, which helps the agent avoid premature
+                # convergence to suboptimal deterministic behavior.
                 entropy_loss = -entropy.mean()
 
                 loss = (
@@ -296,6 +325,10 @@ class PPO:
                 explained_variance = float(explained_variance.detach().cpu())
             else:
                 explained_variance = 0.0
+
+        # Explained variance measures how well the value function predicts the
+        # empirical returns. High explained variance indicates the critic is
+        # providing a useful baseline for reducing policy gradient variance.
 
         return {
             "policy_loss": float(sum(metrics["policy_loss"]) / max(len(metrics["policy_loss"]), 1)),

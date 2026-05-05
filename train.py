@@ -22,7 +22,7 @@ env_configs = {
         "gae_lambda": 0.95,
         "eps_clip": 0.2,
         "value_coef": 0.5,
-        "entropy_coef": 0.001,
+        "entropy_coef": 0.01,
         "target_reward": 475.0,
         "patience": 150,
         "min_episodes": 100,
@@ -32,23 +32,23 @@ env_configs = {
     "LunarLander-v3": {
         "max_episodes": 3000,
         "rollout_steps": 4096,
-        "lr": 1.5e-4,
+        "lr": 6e-4,
         "K_epochs": 4,
         "batch_size": 256,
         "gamma": 0.99,
         "gae_lambda": 0.95,
         "eps_clip": 0.2,
         "value_coef": 0.5,
-        "entropy_coef": 0.005,
-        "target_reward": 160.0,
-        "patience": 300,
+        "entropy_coef": 0.01,
+        "target_reward": 200.0,
+        "patience": 1000,
         "min_episodes": 500,
         "target_kl": 0.015,
         "eval_deterministic": False,
         "normalize_observations": True,
         "degradation_stop_reward": 40.0,
         "degradation_margin": 70.0,
-        "degradation_patience": 80,
+        "degradation_patience": 1000,
     },
     "Acrobot-v1": {
         "max_episodes": 1200,
@@ -61,7 +61,7 @@ env_configs = {
         "eps_clip": 0.2,
         "value_coef": 0.5,
         "entropy_coef": 0.01,
-        "target_reward": -100.0,
+        "target_reward": -95.0,
         "patience": 250,
         "min_episodes": 200,
         "target_kl": 0.02,
@@ -71,7 +71,12 @@ env_configs = {
 }
 
 class RunningMeanStd:
-    """Tracks observation statistics for online normalization."""
+    """Tracks observation statistics for online normalization.
+
+    Normalizing observations using running mean and variance reduces the
+    nonstationarity of the input distribution and stabilizes gradient updates
+    when environments exhibit widely varying state scales.
+    """
 
     def __init__(self, shape, epsilon=1e-4):
         self.mean = np.zeros(shape, dtype=np.float64)
@@ -101,6 +106,10 @@ class RunningMeanStd:
             self.update(np.asarray(x, dtype=np.float64))
         normalized = (np.asarray(x, dtype=np.float32) - self.mean) / np.sqrt(self.var + 1e-8)
         return np.clip(normalized, -clip, clip).astype(np.float32)
+
+    # The clipping is important for numerical stability; it prevents extreme
+    # normalized observations from producing overly large action logits or value
+    # estimates and keeps training robust in the face of outliers.
 
     def state_dict(self):
         return {
@@ -179,6 +188,9 @@ def evaluate(env_name, checkpoint_path, episodes=10, seed=123, deterministic=Tru
         obs_rms = RunningMeanStd(env.observation_space.shape)
         obs_rms.load_state_dict(checkpoint["obs_rms"])
 
+    # Use the same observation normalization statistics during evaluation as
+    # during training to ensure the policy sees a consistent input distribution.
+
 
     rewards = []
     for episode in range(episodes):
@@ -250,6 +262,11 @@ def train(env_name, seed=42, config_overrides=None, output_dir=".", run_name=Non
                     log_prob, _, _ = ppo.policy_old.evaluate(state_tensor, action_tensor)
                     log_prob = log_prob.item()
 
+            # Observations are normalized online during data collection so the
+            # policy sees a stable input distribution even as the agent explores
+            # new states. This normalization must be updated before action
+            # selection when used to avoid distribution shift between train and eval.
+
             next_state, reward, terminated, truncated, _ = env.step(action)
             done = terminated or truncated
             episode_reward += reward
@@ -263,6 +280,11 @@ def train(env_name, seed=42, config_overrides=None, output_dir=".", run_name=Non
                 else:
                     bootstrap_state = obs_rms.normalize(next_state, update=False) if obs_rms is not None else next_state
                     bootstrap_value = ppo.get_value(bootstrap_state)
+
+                # Bootstrap the final state value for partial rollouts so the
+                # advantage estimation can correctly account for the value of the
+                # next unseen state. This is essential when episode boundaries
+                # do not align with fixed rollout length.
                 update_metrics = ppo.update(
                     memory,
                     current_episode=episode,
