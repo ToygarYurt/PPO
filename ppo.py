@@ -1,19 +1,3 @@
-"""
-Proximal Policy Optimization (PPO) Implementation
-================================================
-This module implements the PPO algorithm with both discrete and continuous action spaces.
-PPO is a state-of-the-art policy gradient algorithm that balances sample efficiency and 
-training stability through policy clipping and generalized advantage estimation (GAE).
-
-Key Features:
-- Orthogonal weight initialization for better convergence
-- Generalized Advantage Estimation (GAE) for lower variance advantage estimates
-- Entropy regularization for exploration
-- Learning rate and entropy coefficient annealing
-- Value function clipping for stable critic training
-- Gradient clipping for additional stability
-"""
-
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -132,10 +116,6 @@ class ActorCritic(nn.Module):
 
 
 class PPO:
-    """
-    Proximal Policy Optimization (PPO) Algorithm Implementation.
-    """
-
     def __init__(
         self,
         state_dim,
@@ -231,6 +211,13 @@ class PPO:
 
         total_steps = len(old_states)
         stop_update = False
+        metrics = {
+            "policy_loss": [],
+            "value_loss": [],
+            "entropy": [],
+            "approx_kl": [],
+            "clip_fraction": [],
+        }
 
         for epoch in range(self.K_epochs):
             indices = torch.randperm(total_steps, device=self.device)
@@ -253,6 +240,7 @@ class PPO:
                 logratio = logprobs - old_logprobs_batch
                 ratios = torch.exp(logratio)
                 approx_kl = ((ratios - 1.0) - logratio).mean().detach()
+                clip_fraction = ((ratios - 1.0).abs() > self.eps_clip).float().mean().detach()
 
                 surr1 = ratios * advantages_batch
                 surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages_batch
@@ -284,6 +272,12 @@ class PPO:
                 nn.utils.clip_grad_norm_(self.policy.parameters(), max_norm=0.5)
                 self.optimizer.step()
 
+                metrics["policy_loss"].append(float(policy_loss.detach().cpu()))
+                metrics["value_loss"].append(float(value_loss.detach().cpu()))
+                metrics["entropy"].append(float(entropy.mean().detach().cpu()))
+                metrics["approx_kl"].append(float(approx_kl.detach().cpu()))
+                metrics["clip_fraction"].append(float(clip_fraction.detach().cpu()))
+
                 if self.target_kl is not None and approx_kl > self.target_kl:
                     stop_update = True
                     break
@@ -292,6 +286,26 @@ class PPO:
                 break
 
         self.policy_old.load_state_dict(self.policy.state_dict())
+
+        with torch.no_grad():
+            _, _, new_values = self.policy.evaluate(old_states, old_actions)
+            new_values = new_values.squeeze(-1)
+            returns_var = torch.var(returns)
+            if returns_var > 1e-8:
+                explained_variance = 1.0 - torch.var(returns - new_values) / returns_var
+                explained_variance = float(explained_variance.detach().cpu())
+            else:
+                explained_variance = 0.0
+
+        return {
+            "policy_loss": float(sum(metrics["policy_loss"]) / max(len(metrics["policy_loss"]), 1)),
+            "value_loss": float(sum(metrics["value_loss"]) / max(len(metrics["value_loss"]), 1)),
+            "entropy": float(sum(metrics["entropy"]) / max(len(metrics["entropy"]), 1)),
+            "approx_kl": float(sum(metrics["approx_kl"]) / max(len(metrics["approx_kl"]), 1)),
+            "clip_fraction": float(sum(metrics["clip_fraction"]) / max(len(metrics["clip_fraction"]), 1)),
+            "explained_variance": explained_variance,
+            "updates_performed": len(metrics["value_loss"]),
+        }
 
 
 class Memory:

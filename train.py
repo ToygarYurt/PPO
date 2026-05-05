@@ -1,6 +1,8 @@
 import argparse
+import copy
 import json
 import time
+from pathlib import Path
 import gymnasium as gym
 import matplotlib
 matplotlib.use("Agg")
@@ -13,7 +15,7 @@ env_configs = {
     "CartPole-v1": {
         "max_episodes": 600,
         "rollout_steps": 2048,
-        "lr": 6e-3,
+        "lr": 1e-3,
         "K_epochs": 4,
         "batch_size": 128,
         "gamma": 0.99,
@@ -21,8 +23,7 @@ env_configs = {
         "eps_clip": 0.2,
         "value_coef": 0.5,
         "entropy_coef": 0.001,
-        "solved_reward": 475.0,
-        "stop_reward": 475.0,
+        "target_reward": 475.0,
         "patience": 150,
         "min_episodes": 100,
         "target_kl": 0.03,
@@ -31,24 +32,41 @@ env_configs = {
     "LunarLander-v3": {
         "max_episodes": 3000,
         "rollout_steps": 4096,
-        "lr": 1e-4,
+        "lr": 7e-5,
         "K_epochs": 4,
         "batch_size": 256,
         "gamma": 0.99,
         "gae_lambda": 0.95,
         "eps_clip": 0.2,
         "value_coef": 0.5,
-        "entropy_coef": 0.003,
-        "solved_reward": 220,
-        "stop_reward": 220.0,
-        "patience": 300,
+        "entropy_coef": 0.005,
+        "target_reward": 220.0,
+        "patience": 500,
         "min_episodes": 500,
-        "target_kl": 0.01,
+        "target_kl": 0.008,
         "eval_deterministic": False,
         "normalize_observations": True,
         "degradation_stop_reward": 40.0,
         "degradation_margin": 70.0,
         "degradation_patience": 80,
+    },
+    "Acrobot-v1": {
+        "max_episodes": 1200,
+        "rollout_steps": 2048,
+        "lr": 3e-4,
+        "K_epochs": 4,
+        "batch_size": 128,
+        "gamma": 0.99,
+        "gae_lambda": 0.95,
+        "eps_clip": 0.2,
+        "value_coef": 0.5,
+        "entropy_coef": 0.01,
+        "target_reward": -100.0,
+        "patience": 250,
+        "min_episodes": 200,
+        "target_kl": 0.02,
+        "eval_deterministic": True,
+        "normalize_observations": True,
     },
 }
 
@@ -101,6 +119,17 @@ def moving_average(values, window=100):
     if len(values) == 0:
         return []
     return [float(np.mean(values[max(0, i - window + 1): i + 1])) for i in range(len(values))]
+
+
+def build_config(env_name, overrides=None):
+    config = copy.deepcopy(env_configs[env_name])
+    if overrides:
+        config.update(overrides)
+    return config
+
+
+def safe_name(name):
+    return "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in name)
 
 def make_agent(env, config):
     state_dim = int(np.prod(env.observation_space.shape))
@@ -175,8 +204,11 @@ def evaluate(env_name, checkpoint_path, episodes=10, seed=123, deterministic=Tru
         "rewards": rewards,
     }
 
-def train(env_name, seed=42):
-    config = env_configs[env_name]
+def train(env_name, seed=42, config_overrides=None, output_dir=".", run_name=None, verbose=True):
+    config = build_config(env_name, config_overrides)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    run_name = run_name or env_name.replace("-", "_")
     env = gym.make(env_name)
     env.action_space.seed(seed)
     ppo, continuous, state_dim, action_dim = make_agent(env, config)
@@ -184,12 +216,23 @@ def train(env_name, seed=42):
     memory = Memory()
 
     rewards = []
+    metrics = {
+        "episode": [],
+        "update": [],
+        "value_loss": [],
+        "explained_variance": [],
+        "approx_kl": [],
+        "policy_loss": [],
+        "entropy": [],
+        "clip_fraction": [],
+    }
     best_average_reward = -float("inf")
     best_episode = 0
     degradation_start_episode = None
 
-    checkpoint_path = f"best_{env_name.replace('-', '_')}.pth"
+    checkpoint_path = output_dir / f"best_{safe_name(run_name)}.pth"
     start_time = time.time()
+    update_count = 0
 
     for episode in range(1, config["max_episodes"] + 1):
         state, _ = env.reset(seed=seed + episode)
@@ -220,7 +263,17 @@ def train(env_name, seed=42):
                 else:
                     bootstrap_state = obs_rms.normalize(next_state, update=False) if obs_rms is not None else next_state
                     bootstrap_value = ppo.get_value(bootstrap_state)
-                    ppo.update(memory, current_episode=episode, max_episodes=config["max_episodes"], next_value=bootstrap_value)
+                update_metrics = ppo.update(
+                    memory,
+                    current_episode=episode,
+                    max_episodes=config["max_episodes"],
+                    next_value=bootstrap_value,
+                )
+                update_count += 1
+                metrics["episode"].append(episode)
+                metrics["update"].append(update_count)
+                for key in ("value_loss", "explained_variance", "approx_kl", "policy_loss", "entropy", "clip_fraction"):
+                    metrics[key].append(float(update_metrics[key]))
                 memory.clear_memory()
 
         rewards.append(float(episode_reward))
@@ -249,20 +302,24 @@ def train(env_name, seed=42):
                 },
                 checkpoint_path,
             )
-            print(f"New best {env_name}: episode={episode}, Avg100={best_average_reward:.1f}")
+            if verbose:
+                print(f"New best {env_name}: episode={episode}, Avg100={best_average_reward:.1f}")
 
-        print(f"{env_name} | Episode {episode}, Reward: {episode_reward:.1f}, Avg100: {avg100:.1f}")
+        if verbose:
+            print(f"{env_name} | Episode {episode}, Reward: {episode_reward:.1f}, Avg100: {avg100:.1f}")
 
-        if len(rewards) >= 100 and avg100 >= config["solved_reward"]:
-            print(f"{env_name} solved at episode {episode}: Avg100={avg100:.1f}")
+        if len(rewards) >= 100 and avg100 >= config["target_reward"]:
+            if verbose:
+                print(f"{env_name} reached target at episode {episode}: Avg100={avg100:.1f}")
             break
 
         if len(rewards) >= config.get("min_episodes", 100):
-            if best_average_reward >= config.get("stop_reward", config["solved_reward"]):
-                print(
-                    f"{env_name} early stopped at episode {episode}: "
-                    f"best Avg100={best_average_reward:.1f} at episode {best_episode}"
-                )
+            if best_average_reward >= config["target_reward"]:
+                if verbose:
+                    print(
+                        f"{env_name} early stopped at episode {episode}: "
+                        f"best Avg100={best_average_reward:.1f} at episode {best_episode}"
+                    )
                 break
             degradation_stop_reward = config.get("degradation_stop_reward")
             degradation_margin = config.get("degradation_margin", 70.0)
@@ -272,23 +329,30 @@ def train(env_name, seed=42):
                     if degradation_start_episode is None:
                         degradation_start_episode = episode
                     elif episode - degradation_start_episode >= degradation_patience:
-                        print(
-                            f"{env_name} stopped after performance degradation at episode {episode}: "
-                            f"current Avg100={avg100:.1f}, best Avg100={best_average_reward:.1f} "
-                            f"at episode {best_episode}"
-                        )
+                        if verbose:
+                            print(
+                                f"{env_name} stopped after performance degradation at episode {episode}: "
+                                f"current Avg100={avg100:.1f}, best Avg100={best_average_reward:.1f} "
+                                f"at episode {best_episode}"
+                            )
                         break
                 else:
                     degradation_start_episode = None
             if episode - best_episode >= config.get("patience", config["max_episodes"]):
-                print(
-                    f"{env_name} stopped by patience at episode {episode}: "
-                    f"best Avg100={best_average_reward:.1f} at episode {best_episode}"
-                )
+                if verbose:
+                    print(
+                        f"{env_name} stopped by patience at episode {episode}: "
+                        f"best Avg100={best_average_reward:.1f} at episode {best_episode}"
+                    )
                 break
 
     if len(memory.rewards) > 0:
-        ppo.update(memory, current_episode=len(rewards), max_episodes=config["max_episodes"], next_value=0.0)
+        update_metrics = ppo.update(memory, current_episode=len(rewards), max_episodes=config["max_episodes"], next_value=0.0)
+        update_count += 1
+        metrics["episode"].append(len(rewards))
+        metrics["update"].append(update_count)
+        for key in ("value_loss", "explained_variance", "approx_kl", "policy_loss", "entropy", "clip_fraction"):
+            metrics[key].append(float(update_metrics[key]))
         memory.clear_memory()
 
     env.close()
@@ -304,10 +368,14 @@ def train(env_name, seed=42):
             "action_type": "Continuous" if continuous else "Discrete",
             "state_dim": state_dim,
             "action_dim": action_dim,
-            "checkpoint": checkpoint_path,
+            "checkpoint": str(checkpoint_path),
+            "seed": seed,
+            "run_name": run_name,
         },
         "rewards": rewards,
         "moving_avg_100": moving_average(rewards, 100),
+        "metrics": metrics,
+        "config": config,
     }
 
     if best_average_reward > -float("inf"):
@@ -363,26 +431,80 @@ def plot_results(results, save_path="ppo_training_results.png"):
 
     plt.tight_layout()
     plt.savefig(save_path, dpi=150)
+    plt.close()
     print(f"Training plot saved to {save_path}")
+
+
+def plot_training_metrics(result, output_dir=".", prefix=None):
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    metadata = result["metadata"]
+    prefix = safe_name(prefix or metadata.get("run_name", metadata["environment"]))
+
+    reward_path = output_dir / f"{prefix}_reward.png"
+    plt.figure(figsize=(10, 5))
+    plt.plot(result["rewards"], alpha=0.35, label="Episode reward")
+    plt.plot(result["moving_avg_100"], linewidth=2, label="Avg100")
+    plt.xlabel("Episode")
+    plt.ylabel("Reward")
+    plt.title(f"{metadata['environment']} reward")
+    plt.grid(True, alpha=0.25)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(reward_path, dpi=150)
+    plt.close()
+
+    metric_specs = {
+        "value_loss": ("Value Loss", "value loss"),
+        "explained_variance": ("Explained Variance", "explained variance"),
+        "approx_kl": ("Approximate KL", "approx KL"),
+    }
+    metrics = result.get("metrics", {})
+    episodes = metrics.get("episode", [])
+    saved_paths = {"reward": str(reward_path)}
+
+    for key, (title, ylabel) in metric_specs.items():
+        values = metrics.get(key, [])
+        if not episodes or not values:
+            continue
+        save_path = output_dir / f"{prefix}_{key}.png"
+        plt.figure(figsize=(10, 5))
+        plt.plot(episodes, values, linewidth=1.8)
+        plt.xlabel("Episode")
+        plt.ylabel(ylabel)
+        plt.title(f"{metadata['environment']} {title}")
+        plt.grid(True, alpha=0.25)
+        plt.tight_layout()
+        plt.savefig(save_path, dpi=150)
+        plt.close()
+        saved_paths[key] = str(save_path)
+
+    return saved_paths
 
 def main():
     parser = argparse.ArgumentParser(description="Train PPO on benchmark Gymnasium environments.")
     parser.add_argument("--env", choices=list(env_configs.keys()) + ["all"], default="all")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--output-dir", default="results", help="Directory for JSON, checkpoints, and plots.")
     args = parser.parse_args()
 
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
     env_names = list(env_configs.keys()) if args.env == "all" else [args.env]
     results = {}
 
     for env_name in env_names:
         print(f"\nTraining PPO on {env_name}")
-        results[env_name] = train(env_name, seed=args.seed)
+        run_name = f"{env_name.replace('-', '_')}_seed{args.seed}"
+        results[env_name] = train(env_name, seed=args.seed, output_dir=output_dir, run_name=run_name)
+        plot_training_metrics(results[env_name], output_dir=output_dir, prefix=run_name)
 
-    with open("training_results.json", "w", encoding="utf-8") as f:
+    results_path = output_dir / "training_results.json"
+    with open(results_path, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2, default=lambda value: value.item() if isinstance(value, np.generic) else value)
 
-    plot_results(results)
-    print("Results saved to training_results.json")
+    plot_results(results, save_path=output_dir / "ppo_training_results.png")
+    print(f"Results saved to {results_path}")
 
 if __name__ == "__main__":
     main()
