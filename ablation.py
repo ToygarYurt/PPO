@@ -12,8 +12,8 @@ from train import env_configs, plot_training_metrics, safe_name, train
 
 
 DEFAULT_SEEDS = [0, 1, 2]
-GAE_VALUES = [1.00]
-ENTROPY_VALUES = [0.005]
+GAE_VALUES = [0.95 , 1.00]
+ENTROPY_VALUES = [0.00, 0.01, 0.05]
 
 # Ablation study variations focus on controlling the bias-variance tradeoff
 # through the GAE lambda parameter and the exploration pressure via entropy
@@ -137,7 +137,7 @@ def summarize_groups(groups):
 
 def main():
     parser = argparse.ArgumentParser(description="Run PPO ablation studies on LunarLander-v3.")
-    parser.add_argument("--env", default="LunarLander-v3", choices=list(env_configs.keys()))
+    parser.add_argument("--env", default="all", choices=list(env_configs.keys()) + ["all"])
     parser.add_argument("--seeds", default=",".join(str(seed) for seed in DEFAULT_SEEDS))
     parser.add_argument("--output-dir", default="results/ablation")
     parser.add_argument("--max-episodes", type=int, default=None, help="Optional override for faster pilot runs.")
@@ -148,81 +148,87 @@ def main():
     seeds = parse_seeds(args.seeds)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    common_overrides = {}
-    if args.max_episodes is not None:
-        common_overrides["max_episodes"] = args.max_episodes
-        common_overrides["min_episodes"] = min(env_configs[args.env].get("min_episodes", 100), args.max_episodes)
-    if args.rollout_steps is not None:
-        common_overrides["rollout_steps"] = args.rollout_steps
+    env_names = list(env_configs.keys()) if args.env == "all" else [args.env]
 
-    groups = {}
+    for env_name in env_names:
+        env_output_dir = output_dir / safe_name(env_name)
+        env_output_dir.mkdir(parents=True, exist_ok=True)
 
-    baseline_label = "baseline"
-    groups[baseline_label] = run_seed_group(
-        args.env,
-        baseline_label,
-        common_overrides,
-        seeds,
-        output_dir,
-        verbose=args.verbose,
-    )
+        common_overrides = {}
+        if args.max_episodes is not None:
+            common_overrides["max_episodes"] = args.max_episodes
+            common_overrides["min_episodes"] = min(env_configs[env_name].get("min_episodes", 100), args.max_episodes)
+        if args.rollout_steps is not None:
+            common_overrides["rollout_steps"] = args.rollout_steps
 
-    for value in GAE_VALUES:
-        label = f"gae_lambda_{value:.2f}"
-        overrides = {**common_overrides, "gae_lambda": value}
-        groups[label] = run_seed_group(args.env, label, overrides, seeds, output_dir, verbose=args.verbose)
+        groups = {}
 
-    for value in ENTROPY_VALUES:
-        label = f"entropy_coef_{value:.2f}"
-        overrides = {**common_overrides, "entropy_coef": value}
-        groups[label] = run_seed_group(args.env, label, overrides, seeds, output_dir, verbose=args.verbose)
+        baseline_label = "baseline"
+        groups[baseline_label] = run_seed_group(
+            env_name,
+            baseline_label,
+            common_overrides,
+            seeds,
+            env_output_dir,
+            verbose=args.verbose,
+        )
 
-    # Plotting both the mean and variance across seeds emphasizes not just the
-    # average effect of each parameter setting but also the stability of RL
-    # performance under different random initializations.
+        for value in GAE_VALUES:
+            label = f"gae_lambda_{value:.2f}"
+            overrides = {**common_overrides, "gae_lambda": value}
+            groups[label] = run_seed_group(env_name, label, overrides, seeds, env_output_dir, verbose=args.verbose)
 
-    plot_dir = output_dir / "plots"
-    plot_dir.mkdir(parents=True, exist_ok=True)
+        for value in ENTROPY_VALUES:
+            label = f"entropy_coef_{value:.2f}"
+            overrides = {**common_overrides, "entropy_coef": value}
+            groups[label] = run_seed_group(env_name, label, overrides, seeds, env_output_dir, verbose=args.verbose)
 
-    metric_info = {
-        "reward": ("Reward Avg100", "Avg100 reward"),
-        "value_loss": ("Value Loss", "value loss"),
-        "explained_variance": ("Explained Variance", "explained variance"),
-        "approx_kl": ("Approximate KL", "approx KL"),
-    }
+        # Plotting both the mean and variance across seeds emphasizes not just the
+        # average effect of each parameter setting but also the stability of RL
+        # performance under different random initializations.
 
-    for label, runs in groups.items():
+        plot_dir = env_output_dir / "plots"
+        plot_dir.mkdir(parents=True, exist_ok=True)
+
+        metric_info = {
+            "reward": ("Reward Avg100", "Avg100 reward"),
+            "value_loss": ("Value Loss", "value loss"),
+            "explained_variance": ("Explained Variance", "explained variance"),
+            "approx_kl": ("Approximate KL", "approx KL"),
+        }
+
+        for label, runs in groups.items():
+            for metric, (title, ylabel) in metric_info.items():
+                plot_seed_mean(
+                    runs,
+                    metric,
+                    f"{env_name} {label} {title}",
+                    ylabel,
+                    plot_dir / f"{safe_name(label)}_{metric}_mean_std.png",
+                )
+
+        gae_groups = {label: runs for label, runs in groups.items() if label.startswith("gae_lambda")}
+        entropy_groups = {label: runs for label, runs in groups.items() if label.startswith("entropy_coef")}
+
         for metric, (title, ylabel) in metric_info.items():
-            plot_seed_mean(
-                runs,
+            plot_sweep_comparison(
+                gae_groups,
                 metric,
-                f"{args.env} {label} {title}",
+                f"{env_name} GAE lambda sweep: {title}",
                 ylabel,
-                plot_dir / f"{safe_name(label)}_{metric}_mean_std.png",
+                plot_dir / f"gae_lambda_sweep_{metric}.png",
+            )
+            plot_sweep_comparison(
+                entropy_groups,
+                metric,
+                f"{env_name} entropy coefficient sweep: {title}",
+                ylabel,
+                plot_dir / f"entropy_coef_sweep_{metric}.png",
             )
 
-    gae_groups = {label: runs for label, runs in groups.items() if label.startswith("gae_lambda")}
-    entropy_groups = {label: runs for label, runs in groups.items() if label.startswith("entropy_coef")}
-
-    for metric, (title, ylabel) in metric_info.items():
-        plot_sweep_comparison(
-            gae_groups,
-            metric,
-            f"{args.env} GAE lambda sweep: {title}",
-            ylabel,
-            plot_dir / f"gae_lambda_sweep_{metric}.png",
-        )
-        plot_sweep_comparison(
-            entropy_groups,
-            metric,
-            f"{args.env} entropy coefficient sweep: {title}",
-            ylabel,
-            plot_dir / f"entropy_coef_sweep_{metric}.png",
-        )
-
-    summary = summarize_groups(groups)
-    save_json(summary, output_dir / "ablation_summary.json")
-    print(f"Ablation complete. Results saved under {output_dir}")
+        summary = summarize_groups(groups)
+        save_json(summary, env_output_dir / "ablation_summary.json")
+        print(f"Ablation complete for {env_name}. Results saved under {env_output_dir}")
 
 
 if __name__ == "__main__":

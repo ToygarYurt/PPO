@@ -1,0 +1,23 @@
+{
+  "baseline": {
+    "best_avg100_mean": 218.2940173307994,
+    "best_avg100_std": 5.054215998652509,
+    "final_avg100_mean": 212.0954594544938,
+    "final_avg100_std": 13.818136134760474,
+    "num_seeds": 3
+  },
+  "gae_lambda_1.00": {
+    "best_avg100_mean": 220.74091016988652,
+    "best_avg100_std": 0.5571153810810813,
+    "final_avg100_mean": 220.74091016988652,
+    "final_avg100_std": 0.5571153810810813,
+    "num_seeds": 3
+  },
+  "entropy_coef_0.01": {
+    "best_avg100_mean": 183.8395447333993,
+    "best_avg100_std": 51.20003453756484,
+    "final_avg100_mean": 166.36516169428216,
+    "final_avg100_std": 75.91254365954904,
+    "num_seeds": 3
+  }
+}
