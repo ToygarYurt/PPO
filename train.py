@@ -1,23 +1,19 @@
 import argparse
 import json
 import time
-
 import gymnasium as gym
 import matplotlib
-
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-
 from ppo import Memory, PPO
-
 
 env_configs = {
     "CartPole-v1": {
         "max_episodes": 600,
         "rollout_steps": 2048,
-        "lr": 6e-4,
+        "lr": 6e-3,
         "K_epochs": 4,
         "batch_size": 128,
         "gamma": 0.99,
@@ -34,30 +30,77 @@ env_configs = {
     },
     "LunarLander-v3": {
         "max_episodes": 3000,
-        "rollout_steps": 2048,
-        "lr": 2.5e-4,
-        "K_epochs": 6,
+        "rollout_steps": 4096,
+        "lr": 1e-4,
+        "K_epochs": 4,
         "batch_size": 256,
         "gamma": 0.99,
         "gae_lambda": 0.95,
         "eps_clip": 0.2,
         "value_coef": 0.5,
-        "entropy_coef": 0.01,
-        "solved_reward": 200.0,
-        "stop_reward": 175.0,
-        "patience": 250,
+        "entropy_coef": 0.003,
+        "solved_reward": 220,
+        "stop_reward": 220.0,
+        "patience": 300,
         "min_episodes": 500,
-        "target_kl": 0.02,
+        "target_kl": 0.01,
         "eval_deterministic": False,
+        "normalize_observations": True,
+        "degradation_stop_reward": 40.0,
+        "degradation_margin": 70.0,
+        "degradation_patience": 80,
     },
 }
+
+class RunningMeanStd:
+    """Tracks observation statistics for online normalization."""
+
+    def __init__(self, shape, epsilon=1e-4):
+        self.mean = np.zeros(shape, dtype=np.float64)
+        self.var = np.ones(shape, dtype=np.float64)
+        self.count = epsilon
+
+    def update(self, x):
+        x = np.asarray(x, dtype=np.float64)
+        batch_mean = x.mean(axis=0)
+        batch_var = x.var(axis=0)
+        batch_count = x.shape[0] if x.ndim > 1 else 1
+        self._update_from_moments(batch_mean, batch_var, batch_count)
+
+    def _update_from_moments(self, batch_mean, batch_var, batch_count):
+        delta = batch_mean - self.mean
+        total_count = self.count + batch_count
+        new_mean = self.mean + delta * batch_count / total_count
+        m_a = self.var * self.count
+        m_b = batch_var * batch_count
+        m_2 = m_a + m_b + np.square(delta) * self.count * batch_count / total_count
+        self.mean = new_mean
+        self.var = m_2 / total_count
+        self.count = total_count
+
+    def normalize(self, x, update=False, clip=10.0):
+        if update:
+            self.update(np.asarray(x, dtype=np.float64))
+        normalized = (np.asarray(x, dtype=np.float32) - self.mean) / np.sqrt(self.var + 1e-8)
+        return np.clip(normalized, -clip, clip).astype(np.float32)
+
+    def state_dict(self):
+        return {
+            "mean": self.mean.tolist(),
+            "var": self.var.tolist(),
+            "count": float(self.count),
+        }
+
+    def load_state_dict(self, state):
+        self.mean = np.asarray(state["mean"], dtype=np.float64)
+        self.var = np.asarray(state["var"], dtype=np.float64)
+        self.count = float(state["count"])
 
 
 def moving_average(values, window=100):
     if len(values) == 0:
         return []
     return [float(np.mean(values[max(0, i - window + 1): i + 1])) for i in range(len(values))]
-
 
 def make_agent(env, config):
     state_dim = int(np.prod(env.observation_space.shape))
@@ -84,7 +127,6 @@ def make_agent(env, config):
     )
     return ppo, continuous, state_dim, action_dim
 
-
 def store_transition(memory, state, action, log_prob, reward, value, done, continuous):
     memory.states.append(torch.tensor(state, dtype=torch.float32))
     if continuous:
@@ -96,13 +138,18 @@ def store_transition(memory, state, action, log_prob, reward, value, done, conti
     memory.values.append(float(value))
     memory.is_terminals.append(bool(done))
 
-
 def evaluate(env_name, checkpoint_path, episodes=10, seed=123, deterministic=True):
     env = gym.make(env_name)
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     ppo, continuous, _, _ = make_agent(env, checkpoint["config"])
     ppo.policy.load_state_dict(checkpoint["policy_state_dict"])
     ppo.policy_old.load_state_dict(checkpoint["policy_old_state_dict"])
+        
+    obs_rms = None
+    if checkpoint["config"].get("normalize_observations") and checkpoint.get("obs_rms") is not None:
+        obs_rms = RunningMeanStd(env.observation_space.shape)
+        obs_rms.load_state_dict(checkpoint["obs_rms"])
+
 
     rewards = []
     for episode in range(episodes):
@@ -110,7 +157,8 @@ def evaluate(env_name, checkpoint_path, episodes=10, seed=123, deterministic=Tru
         episode_reward = 0.0
         done = False
         while not done:
-            action, _, _ = ppo.select_action(state, deterministic=deterministic)
+            model_state = obs_rms.normalize(state, update=False) if obs_rms is not None else state
+            action, _, _ = ppo.select_action(model_state, deterministic=deterministic)
             if continuous:
                 action = np.clip(action, env.action_space.low, env.action_space.high)
             state, reward, terminated, truncated, _ = env.step(action)
@@ -127,17 +175,19 @@ def evaluate(env_name, checkpoint_path, episodes=10, seed=123, deterministic=Tru
         "rewards": rewards,
     }
 
-
 def train(env_name, seed=42):
     config = env_configs[env_name]
     env = gym.make(env_name)
     env.action_space.seed(seed)
     ppo, continuous, state_dim, action_dim = make_agent(env, config)
+    obs_rms = RunningMeanStd(env.observation_space.shape) if config.get("normalize_observations") else None
     memory = Memory()
 
     rewards = []
     best_average_reward = -float("inf")
     best_episode = 0
+    degradation_start_episode = None
+
     checkpoint_path = f"best_{env_name.replace('-', '_')}.pth"
     start_time = time.time()
 
@@ -147,12 +197,12 @@ def train(env_name, seed=42):
         done = False
 
         while not done:
-            action, log_prob, value = ppo.select_action(state)
-
+            model_state = obs_rms.normalize(state, update=True) if obs_rms is not None else state
+            action, log_prob, value = ppo.select_action(model_state)
             if continuous:
                 action = np.clip(action, env.action_space.low, env.action_space.high)
                 with torch.no_grad():
-                    state_tensor = torch.tensor(state, dtype=torch.float32, device=ppo.device).unsqueeze(0)
+                    state_tensor = torch.tensor(model_state, dtype=torch.float32, device=ppo.device).unsqueeze(0)
                     action_tensor = torch.tensor(action, dtype=torch.float32, device=ppo.device).unsqueeze(0)
                     log_prob, _, _ = ppo.policy_old.evaluate(state_tensor, action_tensor)
                     log_prob = log_prob.item()
@@ -161,12 +211,16 @@ def train(env_name, seed=42):
             done = terminated or truncated
             episode_reward += reward
 
-            store_transition(memory, state, action, log_prob, reward, value, done, continuous)
+            store_transition(memory, model_state, action, log_prob, reward, value, done, continuous)
             state = next_state
 
             if len(memory.rewards) >= config["rollout_steps"]:
-                bootstrap_value = 0.0 if done else ppo.get_value(next_state)
-                ppo.update(memory, current_episode=episode, max_episodes=config["max_episodes"], next_value=bootstrap_value)
+                if done:
+                    bootstrap_value = 0.0
+                else:
+                    bootstrap_state = obs_rms.normalize(next_state, update=False) if obs_rms is not None else next_state
+                    bootstrap_value = ppo.get_value(bootstrap_state)
+                    ppo.update(memory, current_episode=episode, max_episodes=config["max_episodes"], next_value=bootstrap_value)
                 memory.clear_memory()
 
         rewards.append(float(episode_reward))
@@ -175,6 +229,8 @@ def train(env_name, seed=42):
         if len(rewards) >= 100 and avg100 > best_average_reward:
             best_average_reward = avg100
             best_episode = episode
+            degradation_start_episode = None
+
             torch.save(
                 {
                     "episode": episode,
@@ -188,6 +244,8 @@ def train(env_name, seed=42):
                     "action_dim": action_dim,
                     "continuous": continuous,
                     "seed": seed,
+                    "obs_rms": obs_rms.state_dict() if obs_rms is not None else None,
+
                 },
                 checkpoint_path,
             )
@@ -206,6 +264,22 @@ def train(env_name, seed=42):
                     f"best Avg100={best_average_reward:.1f} at episode {best_episode}"
                 )
                 break
+            degradation_stop_reward = config.get("degradation_stop_reward")
+            degradation_margin = config.get("degradation_margin", 70.0)
+            degradation_patience = config.get("degradation_patience", 100)
+            if degradation_stop_reward is not None and best_average_reward >= degradation_stop_reward:
+                if avg100 <= best_average_reward - degradation_margin:
+                    if degradation_start_episode is None:
+                        degradation_start_episode = episode
+                    elif episode - degradation_start_episode >= degradation_patience:
+                        print(
+                            f"{env_name} stopped after performance degradation at episode {episode}: "
+                            f"current Avg100={avg100:.1f}, best Avg100={best_average_reward:.1f} "
+                            f"at episode {best_episode}"
+                        )
+                        break
+                else:
+                    degradation_start_episode = None
             if episode - best_episode >= config.get("patience", config["max_episodes"]):
                 print(
                     f"{env_name} stopped by patience at episode {episode}: "
@@ -264,7 +338,6 @@ def train(env_name, seed=42):
 
     return result
 
-
 def plot_results(results, save_path="ppo_training_results.png"):
     plt.figure(figsize=(12, 5))
     for index, (env_name, data) in enumerate(results.items(), start=1):
@@ -287,10 +360,10 @@ def plot_results(results, save_path="ppo_training_results.png"):
         plt.ylabel("Reward")
         plt.grid(True, alpha=0.25)
         plt.legend()
+
     plt.tight_layout()
     plt.savefig(save_path, dpi=150)
     print(f"Training plot saved to {save_path}")
-
 
 def main():
     parser = argparse.ArgumentParser(description="Train PPO on benchmark Gymnasium environments.")
@@ -300,15 +373,16 @@ def main():
 
     env_names = list(env_configs.keys()) if args.env == "all" else [args.env]
     results = {}
+
     for env_name in env_names:
         print(f"\nTraining PPO on {env_name}")
         results[env_name] = train(env_name, seed=args.seed)
 
     with open("training_results.json", "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2, default=lambda value: value.item() if isinstance(value, np.generic) else value)
+
     plot_results(results)
     print("Results saved to training_results.json")
-
 
 if __name__ == "__main__":
     main()
