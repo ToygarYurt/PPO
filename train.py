@@ -43,7 +43,7 @@ env_configs = {
         "target_reward": 220.0,
         "patience": 1000,
         "min_episodes": 500,
-        "target_kl": 0.015,
+        "target_kl": 0.05,
         "eval_deterministic": False,
         "normalize_observations": True,
         "degradation_stop_reward": 40.0,
