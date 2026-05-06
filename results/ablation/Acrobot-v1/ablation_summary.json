@@ -1,44 +1,51 @@
 {
   "baseline": {
-    "best_avg100_mean": -84.68333333333334,
-    "best_avg100_std": 0.3988594851434346,
-    "final_avg100_mean": -84.68333333333334,
-    "final_avg100_std": 0.3988594851434346,
+    "best_avg100_mean": -84.50333333333333,
+    "best_avg100_std": 0.047842333648022484,
+    "final_avg100_mean": -84.50333333333333,
+    "final_avg100_std": 0.047842333648022484,
+    "num_seeds": 3
+  },
+  "gae_lambda_0.90": {
+    "best_avg100_mean": -84.89,
+    "best_avg100_std": 0.4123913998456666,
+    "final_avg100_mean": -85.88666666666666,
+    "final_avg100_std": 1.7757877751077735,
     "num_seeds": 3
   },
   "gae_lambda_0.95": {
-    "best_avg100_mean": -85.42333333333333,
-    "best_avg100_std": 0.691198636829933,
-    "final_avg100_mean": -87.23333333333335,
-    "final_avg100_std": 3.250459796534773,
+    "best_avg100_mean": -84.88666666666667,
+    "best_avg100_std": 0.03399346342395164,
+    "final_avg100_mean": -84.88666666666667,
+    "final_avg100_std": 0.03399346342395164,
     "num_seeds": 3
   },
   "gae_lambda_1.00": {
-    "best_avg100_mean": -224.22,
-    "best_avg100_std": 195.00772155652365,
-    "final_avg100_mean": -226.01333333333332,
-    "final_avg100_std": 193.74257101169638,
+    "best_avg100_mean": -87.06333333333333,
+    "best_avg100_std": 1.6712736327590314,
+    "final_avg100_mean": -92.48,
+    "final_avg100_std": 6.183596580200451,
     "num_seeds": 3
   },
   "entropy_coef_0.00": {
-    "best_avg100_mean": -84.54,
-    "best_avg100_std": 0.15556349186103965,
-    "final_avg100_mean": -84.54,
-    "final_avg100_std": 0.15556349186103965,
+    "best_avg100_mean": -84.77333333333334,
+    "best_avg100_std": 0.3091206165165233,
+    "final_avg100_mean": -86.13,
+    "final_avg100_std": 2.12136748348795,
     "num_seeds": 3
   },
   "entropy_coef_0.01": {
-    "best_avg100_mean": -84.73666666666666,
-    "best_avg100_std": 0.2916999980954558,
-    "final_avg100_mean": -84.73666666666666,
-    "final_avg100_std": 0.2916999980954558,
+    "best_avg100_mean": -84.61666666666667,
+    "best_avg100_std": 0.5138309276622262,
+    "final_avg100_mean": -84.61666666666667,
+    "final_avg100_std": 0.5138309276622262,
     "num_seeds": 3
   },
   "entropy_coef_0.05": {
-    "best_avg100_mean": -85.95,
-    "best_avg100_std": 2.5634872082120252,
-    "final_avg100_mean": -89.76666666666667,
-    "final_avg100_std": 5.851953140239209,
+    "best_avg100_mean": -84.84666666666668,
+    "best_avg100_std": 0.12256517540566704,
+    "final_avg100_mean": -84.84666666666668,
+    "final_avg100_std": 0.12256517540566704,
     "num_seeds": 3
   }
 }

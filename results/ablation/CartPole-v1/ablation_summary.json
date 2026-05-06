@@ -1,44 +1,51 @@
 {
   "baseline": {
-    "best_avg100_mean": 498.99666666666667,
-    "best_avg100_std": 1.4189276075810011,
-    "final_avg100_mean": 498.94666666666666,
-    "final_avg100_std": 1.489638285699672,
+    "best_avg100_mean": 500.0,
+    "best_avg100_std": 0.0,
+    "final_avg100_mean": 500.0,
+    "final_avg100_std": 0.0,
+    "num_seeds": 3
+  },
+  "gae_lambda_0.90": {
+    "best_avg100_mean": 500.0,
+    "best_avg100_std": 0.0,
+    "final_avg100_mean": 500.0,
+    "final_avg100_std": 0.0,
     "num_seeds": 3
   },
   "gae_lambda_0.95": {
-    "best_avg100_mean": 497.2833333333333,
-    "best_avg100_std": 3.8419468444468974,
-    "final_avg100_mean": 497.2833333333333,
-    "final_avg100_std": 3.8419468444468974,
+    "best_avg100_mean": 497.8833333333334,
+    "best_avg100_std": 1.735095258351989,
+    "final_avg100_mean": 496.3500000000001,
+    "final_avg100_std": 3.6465417406999,
     "num_seeds": 3
   },
   "gae_lambda_1.00": {
-    "best_avg100_mean": 492.40000000000003,
-    "best_avg100_std": 3.719309971845134,
-    "final_avg100_mean": 491.6366666666667,
-    "final_avg100_std": 4.272051289746196,
+    "best_avg100_mean": 492.1566666666667,
+    "best_avg100_std": 3.5872025621955372,
+    "final_avg100_mean": 488.28,
+    "final_avg100_std": 4.85374769293448,
     "num_seeds": 3
   },
   "entropy_coef_0.00": {
-    "best_avg100_mean": 500.0,
-    "best_avg100_std": 0.0,
-    "final_avg100_mean": 500.0,
-    "final_avg100_std": 0.0,
+    "best_avg100_mean": 499.57,
+    "best_avg100_std": 0.6081118318204405,
+    "final_avg100_mean": 499.57,
+    "final_avg100_std": 0.6081118318204405,
     "num_seeds": 3
   },
   "entropy_coef_0.01": {
-    "best_avg100_mean": 500.0,
-    "best_avg100_std": 0.0,
-    "final_avg100_mean": 500.0,
-    "final_avg100_std": 0.0,
+    "best_avg100_mean": 498.23333333333335,
+    "best_avg100_std": 1.4704496666741949,
+    "final_avg100_mean": 496.27,
+    "final_avg100_std": 4.13164212712896,
     "num_seeds": 3
   },
   "entropy_coef_0.05": {
-    "best_avg100_mean": 498.62999999999994,
-    "best_avg100_std": 1.9374725804511466,
-    "final_avg100_mean": 497.82666666666665,
-    "final_avg100_std": 3.073557475557518,
+    "best_avg100_mean": 496.74666666666667,
+    "best_avg100_std": 2.761042476231678,
+    "final_avg100_mean": 491.71333333333337,
+    "final_avg100_std": 5.866130657331865,
     "num_seeds": 3
   }
 }

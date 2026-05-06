@@ -12,7 +12,7 @@ from train import env_configs, plot_training_metrics, safe_name, train
 
 
 DEFAULT_SEEDS = [0, 1, 2]
-GAE_VALUES = [0.95 , 1.00]
+GAE_VALUES = [0.90, 0.95 , 1.00]
 ENTROPY_VALUES = [0.00, 0.01, 0.05]
 
 # Ablation study variations focus on controlling the bias-variance tradeoff
